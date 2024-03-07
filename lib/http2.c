@@ -395,6 +395,10 @@ static ssize_t send_callback(nghttp2_session *h2,
   written = ((Curl_send*)c->send_underlying)(data, FIRSTSOCKET,
                                              mem, length, &result);
 
+  if (written >= 0 && (size_t) written < length) {
+    H2BUGF(infof(data, "[SUPER-6847] we don't have implementation to handle this case"));
+  }
+
   if(result == CURLE_AGAIN) {
     return NGHTTP2_ERR_WOULDBLOCK;
   }
