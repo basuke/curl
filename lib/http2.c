@@ -47,6 +47,7 @@
 #include "curl_memory.h"
 #include "memdebug.h"
 
+#define DEBUG_HTTP2 1
 #define H2_BUFSIZE 32768
 
 #if (NGHTTP2_VERSION_NUM < 0x010c00)
@@ -739,6 +740,15 @@ static int on_frame_recv(nghttp2_session *session, const nghttp2_frame *frame,
 
       if(nghttp2_is_fatal(rv)) {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
+      }
+    }
+    if(frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
+      /* Stream has ended. If there is pending data, ensure that read
+         will occur to consume it. */
+      if(!data->state.drain && stream->memlen) {
+        H2BUGF(infof(data_s, "[SUPER-6847] set drain on stream end"));
+        drain_this(data, httpc);
+        Curl_expire(data, 0, EXPIRE_RUN_NOW);
       }
     }
     break;
@@ -1712,6 +1722,7 @@ static ssize_t http2_recv(struct Curl_easy *data, int sockindex,
 
     stream->pausedata += nread;
     stream->pauselen -= nread;
+    drain_this(data, httpc);
 
     if(stream->pauselen == 0) {
       H2BUGF(infof(data, "Unpaused by stream %u", stream->stream_id));
@@ -1720,17 +1731,7 @@ static ssize_t http2_recv(struct Curl_easy *data, int sockindex,
 
       stream->pausedata = NULL;
       stream->pauselen = 0;
-
-      /* When NGHTTP2_ERR_PAUSE is returned from
-         data_source_read_callback, we might not process DATA frame
-         fully.  Calling nghttp2_session_mem_recv() again will
-         continue to process DATA frame, but if there is no incoming
-         frames, then we have to call it again with 0-length data.
-         Without this, on_stream_close callback will not be called,
-         and stream could be hanged. */
-      if(h2_process_pending_input(data, httpc, err) != 0) {
-        return -1;
-      }
+      H2BUGF(infof(data, "[SUPER-6847] do not process pending input data when copying pausedata to the caller"));
     }
     H2BUGF(infof(data, "http2_recv: returns unpaused %zd bytes on stream %u",
                  nread, stream->stream_id));
